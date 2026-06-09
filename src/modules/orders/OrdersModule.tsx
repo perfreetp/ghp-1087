@@ -15,7 +15,8 @@ export const OrdersModule = () => {
   const dailyGoals = useGameStore((s) => s.dailyGoals)
   const deliveryOrder = useGameStore((s) => s.deliveryOrder)
   const preparedItems = useGameStore((s) => s.preparedItems)
-  const coins = useGameStore((s) => s.coins)
+  const customerReviews = useGameStore((s) => s.customerReviews)
+  const statistics = useGameStore((s) => s.statistics)
 
   const deliverToCustomer = useGameStore((s) => s.deliverToCustomer)
   const claimDailyGoal = useGameStore((s) => s.claimDailyGoal)
@@ -61,6 +62,35 @@ export const OrdersModule = () => {
     }
   }
 
+  const totalReviews = statistics.totalGoodReviews + statistics.totalPoorReviews
+  const goodRatePercent = totalReviews > 0
+    ? Math.floor((statistics.totalGoodReviews / totalReviews) * 100)
+    : null
+  const excellentCount = statistics.totalExcellentReviews
+  const goodOnlyCount = statistics.totalGoodReviews - statistics.totalExcellentReviews
+  const poorCount = statistics.totalPoorReviews
+
+  const ratingStars: Record<string, string> = {
+    excellent: '⭐⭐⭐⭐⭐',
+    good: '⭐⭐⭐',
+    average: '⭐⭐⭐',
+    poor: '⭐',
+  }
+
+  const ratingBorderClass: Record<string, string> = {
+    excellent: 'border-green-400',
+    good: 'border-blue-400',
+    average: 'border-gray-400',
+    poor: 'border-red-400',
+  }
+
+  const ratingBgClass: Record<string, string> = {
+    excellent: 'bg-green-50',
+    good: 'bg-blue-50',
+    average: 'bg-gray-50',
+    poor: 'bg-red-50',
+  }
+
   return (
     <div className="h-full w-full">
       <Card variant="default" padding="none" className="h-full overflow-hidden flex flex-col">
@@ -72,6 +102,13 @@ export const OrdersModule = () => {
             </span>
           </div>
           <div className="flex-1" />
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<span className="text-base">⭐</span>}
+          >
+            好评率 {goodRatePercent !== null ? `${goodRatePercent}%` : '--%'}
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -359,6 +396,63 @@ export const OrdersModule = () => {
               })}
             </div>
           )}
+
+          <Card variant="paper" className="border-2 border-amber-300">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div className="font-extrabold text-amber-900 flex items-center gap-2 text-lg">
+                <span className="text-xl">💬</span> 最近顾客评价
+              </div>
+              <div className="flex items-center gap-3 text-sm font-bold">
+                <span className="text-green-700">⭐优秀 {excellentCount}</span>
+                <span className="text-blue-700">👍良好 {goodOnlyCount}</span>
+                <span className="text-red-700">👎差评 {poorCount}</span>
+              </div>
+            </div>
+            {customerReviews.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="text-5xl mb-3">💭</div>
+                <div className="text-stone-500 font-bold">暂无评价，做好服务让顾客满意吧～</div>
+              </div>
+            ) : (
+              <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+                {customerReviews.slice(0, 20).map((review, idx) => {
+                  const custDef = review.isDelivery ? null : getCustomerById(review.customerDefId)
+                  return (
+                    <motion.div
+                      key={review.id}
+                      initial={{ x: -20, opacity: 0 }}
+                      animate={{ x: 0, opacity: 1 }}
+                      transition={{ delay: idx * 0.03 }}
+                      className={clsx(
+                        'rounded-xl p-3 border-2 flex items-start gap-3',
+                        ratingBorderClass[review.rating],
+                        ratingBgClass[review.rating]
+                      )}
+                    >
+                      <div className="text-4xl shrink-0">
+                        {review.isDelivery ? '🛵' : (custDef?.emoji || '🐱')}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm mb-1">
+                          {ratingStars[review.rating]}
+                        </div>
+                        <div className="text-stone-800 font-bold text-sm mb-1">
+                          {review.comment}
+                        </div>
+                        <div className="text-[11px] text-stone-500 font-bold flex items-center gap-2 flex-wrap">
+                          <span>{review.isDelivery ? '外卖' : '堂食'}</span>
+                          <span>·</span>
+                          <span>剩余耐心{review.patienceLeft}%</span>
+                          <span>·</span>
+                          <span>餐品齐全{review.itemsComplete ? '✅' : '❌'}</span>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )
+                })}
+              </div>
+            )}
+          </Card>
         </div>
       </Card>
     </div>

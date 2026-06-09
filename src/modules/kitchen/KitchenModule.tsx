@@ -22,6 +22,7 @@ export const KitchenModule = () => {
   const potLevel = useGameStore((s) => s.potLevel)
   const fridgeLevel = useGameStore((s) => s.fridgeLevel)
   const coins = useGameStore((s) => s.coins)
+  const cookingQueue = useGameStore((s) => s.cookingQueue)
 
   const startCooking = useGameStore((s) => s.startCooking)
   const collectCooked = useGameStore((s) => s.collectCooked)
@@ -34,9 +35,17 @@ export const KitchenModule = () => {
   const removeIngredientFromPrep = useGameStore((s) => s.removeIngredientFromPrep)
   const clearPrep = useGameStore((s) => s.clearPrep)
   const startCookingFromPrep = useGameStore((s) => s.startCookingFromPrep)
+  const addCookingQueueItem = useGameStore((s) => s.addCookingQueueItem)
+  const cancelCookingQueueItem = useGameStore((s) => s.cancelCookingQueueItem)
+  const getShiftBonuses = useGameStore((s) => s.getShiftBonuses)
 
   const [activeCategory, setActiveCategory] = useState<'donut' | 'tea' | 'pudding'>('donut')
   const [showShop, setShowShop] = useState(true)
+  const [showQueue, setShowQueue] = useState(false)
+  const [queueCounts, setQueueCounts] = useState<Record<string, number>>({})
+
+  const { cookSpeedBonus } = getShiftBonuses()
+  const chefBonusPercent = Math.round(cookSpeedBonus * 100)
 
   const categories = [
     { id: 'donut' as const, name: '甜甜圈', emoji: '🍩', station: 'oven' as StationType },
@@ -70,6 +79,12 @@ export const KitchenModule = () => {
       recipe.category === 'donut' ? 'oven' : recipe.category === 'tea' ? 'pot' : 'fridge'
     setPrepRecipe(station, recipe.id)
     setActiveCategory(recipe.category)
+  }
+
+  const getSlotDisplayIndex = (slotIndex: number) => {
+    if (slotIndex < 3) return slotIndex + 1
+    if (slotIndex < 5) return slotIndex - 2
+    return slotIndex - 4
   }
 
   const renderPrepArea = (station: StationType, slotIndices: number[]) => {
@@ -178,6 +193,9 @@ export const KitchenModule = () => {
     )
   }
 
+  const cookingItems = cookingQueue.filter((q) => q.status === 'cooking')
+  const queuedItems = cookingQueue.filter((q) => q.status === 'queued')
+
   return (
     <div className="h-full w-full">
       <Card variant="default" padding="none" className="h-full overflow-hidden">
@@ -200,17 +218,112 @@ export const KitchenModule = () => {
             ))}
           </div>
           <div className="flex-1" />
-          <Button
-            variant="secondary"
-            size="md"
-            icon={<ShoppingCart size={18} />}
-            onClick={() => setShowShop(!showShop)}
-          >
-            {showShop ? '收起' : '采购食材'}
-          </Button>
+          <div className="flex gap-2 items-center">
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => setShowQueue(!showQueue)}
+              className={clsx(
+                showQueue && 'bg-amber-200 border-amber-400 text-amber-900'
+              )}
+            >
+              📋 队列 ({cookingQueue.length})
+            </Button>
+            <Button
+              variant="secondary"
+              size="md"
+              icon={<ShoppingCart size={18} />}
+              onClick={() => setShowShop(!showShop)}
+            >
+              {showShop ? '收起' : '采购食材'}
+            </Button>
+          </div>
         </div>
 
         <div className="h-[calc(100%-60px)] overflow-y-auto p-4">
+          <AnimatePresence>
+            {showQueue && cookingQueue.length > 0 && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="mb-4 overflow-hidden"
+              >
+                <div className="bg-white rounded-2xl border-2 border-amber-300 shadow-md p-4">
+                  <div className="font-extrabold text-amber-900 flex items-center gap-2 text-lg mb-3">
+                    <span>📋</span>制作队列
+                  </div>
+                  {cookingItems.length > 0 && (
+                    <div className="mb-3">
+                      <div className="text-xs font-bold text-orange-600 mb-2 flex items-center gap-1">
+                        <span>🔄</span>制作中
+                      </div>
+                      <div className="divide-y divide-stone-100 border border-stone-100 rounded-xl overflow-hidden">
+                        {cookingItems.map((item) => {
+                          const recipe = getRecipeById(item.recipeId)
+                          return (
+                            <div
+                              key={item.id}
+                              className="flex justify-between items-center gap-3 px-3 py-2 bg-gradient-to-r from-orange-50 to-amber-50"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="text-2xl">{recipe?.emoji}</span>
+                                <div>
+                                  <div className="font-bold text-sm text-stone-700">
+                                    {recipe?.name}
+                                  </div>
+                                  <div className="text-[10px] text-orange-600 font-bold">
+                                    炉位 #{item.slotIndex !== null ? getSlotDisplayIndex(item.slotIndex) : '-'}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-xs font-bold text-orange-500 animate-pulse">
+                                🔥 制作中
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {queuedItems.length > 0 && (
+                    <div>
+                      <div className="text-xs font-bold text-sky-600 mb-2 flex items-center gap-1">
+                        <span>⏳</span>排队中 ({queuedItems.length})
+                      </div>
+                      <div className="divide-y divide-stone-100 border border-stone-100 rounded-xl overflow-hidden">
+                        {queuedItems.map((item) => {
+                          const recipe = getRecipeById(item.recipeId)
+                          return (
+                            <div
+                              key={item.id}
+                              className="flex justify-between items-center gap-3 px-3 py-2 bg-white hover:bg-sky-50 transition-colors"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="text-2xl">{recipe?.emoji}</span>
+                                <div className="font-bold text-sm text-stone-700">
+                                  {recipe?.name}
+                                </div>
+                              </div>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => cancelCookingQueueItem(item.id)}
+                                className="text-red-500 hover:text-red-600 hover:bg-red-50"
+                              >
+                                取消
+                              </Button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <AnimatePresence>
             {showShop && (
               <motion.div
@@ -305,6 +418,8 @@ export const KitchenModule = () => {
                 const slots: number[] =
                   station === 'oven' ? [0, 1, 2] : station === 'pot' ? [3, 4] : [5]
 
+                const qCount = queueCounts[recipe.id] || 1
+
                 return (
                   <motion.div
                     key={recipe.id}
@@ -365,22 +480,49 @@ export const KitchenModule = () => {
                       </div>
                     </div>
                     {unlocked ? (
-                      <div className="mt-3 grid grid-cols-3 gap-1.5" onClick={(e) => e.stopPropagation()}>
-                        {[0, 1, 2].map((slotIdx) => {
-                          const idx = slots[slotIdx % slots.length]
-                          const occupied = cookingSlots[idx]?.recipeId
-                          return (
-                            <Button
-                              key={slotIdx}
-                              size="sm"
-                              variant={canCook && !occupied ? 'primary' : 'ghost'}
-                              disabled={!canCook || !!occupied}
-                              onClick={() => startCooking(recipe.id, idx)}
-                            >
-                              {occupied ? '占用中' : `制作${slotIdx + 1}`}
-                            </Button>
-                          )
-                        })}
+                      <div className="mt-3 space-y-2" onClick={(e) => e.stopPropagation()}>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {[0, 1, 2].map((slotIdx) => {
+                            const idx = slots[slotIdx % slots.length]
+                            const occupied = cookingSlots[idx]?.recipeId
+                            return (
+                              <Button
+                                key={slotIdx}
+                                size="sm"
+                                variant={canCook && !occupied ? 'primary' : 'ghost'}
+                                disabled={!canCook || !!occupied}
+                                onClick={() => startCooking(recipe.id, idx)}
+                              >
+                                {occupied ? '占用中' : `制作${slotIdx + 1}`}
+                              </Button>
+                            )
+                          })}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={qCount}
+                            onChange={(e) =>
+                              setQueueCounts({ ...queueCounts, [recipe.id]: parseInt(e.target.value) })
+                            }
+                            className="flex-1 min-w-0 px-2 py-1.5 text-xs font-bold border-2 border-amber-200 rounded-lg bg-white text-stone-700 focus:outline-none focus:border-amber-400"
+                            disabled={!canCook}
+                          >
+                            {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                              <option key={n} value={n}>
+                                {n}份
+                              </option>
+                            ))}
+                          </select>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={!canCook}
+                            onClick={() => addCookingQueueItem(recipe.id, qCount)}
+                            className="shrink-0"
+                          >
+                            📋 加入队列
+                          </Button>
+                        </div>
                       </div>
                     ) : (
                       <Button
@@ -411,7 +553,14 @@ export const KitchenModule = () => {
                 <div className="font-extrabold text-amber-900 flex items-center gap-2">
                   <span className="text-3xl">🔥</span>
                   <div>
-                    <div>烤箱</div>
+                    <div className="flex items-center gap-2">
+                      烤箱
+                      {chefBonusPercent > 0 && (
+                        <span className="text-xs font-bold text-pink-600 bg-pink-100 px-2 py-0.5 rounded-full">
+                          🐱厨师加成+{chefBonusPercent}%
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs font-bold text-amber-700">
                       Lv.{ovenLevel} · 甜甜圈 · 速度+{((ovenLevel - 1) * 8)}%
                     </div>
@@ -477,7 +626,14 @@ export const KitchenModule = () => {
                 <div className="font-extrabold text-amber-900 flex items-center gap-2">
                   <span className="text-3xl">🫖</span>
                   <div>
-                    <div>煮锅</div>
+                    <div className="flex items-center gap-2">
+                      煮锅
+                      {chefBonusPercent > 0 && (
+                        <span className="text-xs font-bold text-pink-600 bg-pink-100 px-2 py-0.5 rounded-full">
+                          🐱厨师加成+{chefBonusPercent}%
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs font-bold text-amber-700">
                       Lv.{potLevel} · 奶茶 · 速度+{((potLevel - 1) * 8)}%
                     </div>
@@ -543,7 +699,14 @@ export const KitchenModule = () => {
                 <div className="font-extrabold text-amber-900 flex items-center gap-2">
                   <span className="text-3xl">❄️</span>
                   <div>
-                    <div>冰箱</div>
+                    <div className="flex items-center gap-2">
+                      冰箱
+                      {chefBonusPercent > 0 && (
+                        <span className="text-xs font-bold text-pink-600 bg-pink-100 px-2 py-0.5 rounded-full">
+                          🐱厨师加成+{chefBonusPercent}%
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs font-bold text-amber-700">
                       Lv.{fridgeLevel} · 布丁 · 速度+{((fridgeLevel - 1) * 8)}%
                     </div>

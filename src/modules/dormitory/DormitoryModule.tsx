@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useGameStore } from '@/store/useGameStore'
 import { CAT_EMPLOYEES, getCatEmployeeById } from '@/data/employees'
@@ -6,18 +6,24 @@ import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import { clsx } from 'clsx'
-import { BedDouble, ChefHat, UserCheck, Coins, Zap, Moon, Sun } from 'lucide-react'
+import { BedDouble, ChefHat, UserCheck, Coins, Zap, Moon, Sun, Check } from 'lucide-react'
+import type { WorkShift, EmployeeShift } from '@/types'
 
 export const DormitoryModule = () => {
   const employees = useGameStore((s) => s.employees)
   const ownedCatIds = useGameStore((s) => s.ownedCatIds)
   const coins = useGameStore((s) => s.coins)
   const day = useGameStore((s) => s.day)
+  const shiftSchedule = useGameStore((s) => s.shiftSchedule)
+  const currentShiftOfDay = useGameStore((s) => s.currentShiftOfDay)
 
   const hireEmployee = useGameStore((s) => s.hireEmployee)
   const setEmployeeStatus = useGameStore((s) => s.setEmployeeStatus)
   const assignEmployeeStation = useGameStore((s) => s.assignEmployeeStation)
   const showToast = useGameStore((s) => s.showToast)
+  const setEmployeeShift = useGameStore((s) => s.setEmployeeShift)
+  const removeEmployeeShift = useGameStore((s) => s.removeEmployeeShift)
+  const getShiftBonuses = useGameStore((s) => s.getShiftBonuses)
 
   const [activeTab, setActiveTab] = useState<'working' | 'hire'>('working')
 
@@ -33,6 +39,43 @@ export const DormitoryModule = () => {
     { id: 'register', name: '收银台', icon: Coins },
   ] as const
 
+  const shifts: { id: WorkShift; name: string; icon: string }[] = [
+    { id: 'morning', name: '上午', icon: '🌅' },
+    { id: 'afternoon', name: '下午', icon: '🌞' },
+    { id: 'evening', name: '晚上', icon: '🌙' },
+  ]
+
+  const stations: { id: EmployeeShift['station']; name: string; short: string }[] = [
+    { id: 'kitchen', name: '厨房', short: '厨' },
+    { id: 'floor', name: '大堂', short: '堂' },
+    { id: 'register', name: '收银台', short: '银' },
+  ]
+
+  const shiftBonuses = getShiftBonuses()
+  const cookBonusPct = Math.round(shiftBonuses.cookSpeedBonus * 100)
+  const patienceBonusPct = Math.round(shiftBonuses.patienceBonus * 100)
+  const coinBonusPct = Math.round(shiftBonuses.coinBonus * 100)
+
+  const getEmployeeShift = (empId: string, shift: WorkShift): EmployeeShift | undefined => {
+    return shiftSchedule.find((sh) => sh.employeeId === empId && sh.shift === shift)
+  }
+
+  const handleShiftCellClick = (empId: string, shift: WorkShift, station: EmployeeShift['station']) => {
+    const existing = getEmployeeShift(empId, shift)
+    if (existing && existing.station === station) {
+      const sameEmpOtherShifts = shiftSchedule.filter((sh) => sh.employeeId === empId && sh.shift !== shift)
+      if (sameEmpOtherShifts.length === 0) {
+        removeEmployeeShift(empId)
+      } else {
+        const updatedSchedule = shiftSchedule.filter((sh) => !(sh.employeeId === empId && sh.shift === shift))
+        useGameStore.setState({ shiftSchedule: updatedSchedule })
+        showToast({ type: 'info', title: '已取消该班次排班', emoji: '📅', duration: 1200 })
+      }
+    } else {
+      setEmployeeShift(empId, shift, station)
+    }
+  }
+
   return (
     <div className="h-full w-full">
       <Card variant="default" padding="none" className="h-full overflow-hidden flex flex-col">
@@ -41,6 +84,18 @@ export const DormitoryModule = () => {
             <span className="text-2xl">🏠</span>猫咪宿舍 & 员工中心
             <span className="text-xs font-bold text-purple-600 bg-purple-200 px-2 py-0.5 rounded-full">
               已雇佣 {employees.length} 只
+            </span>
+          </div>
+          <div className="flex items-center gap-2 bg-white/80 rounded-xl px-3 py-1.5 border-2 border-amber-200">
+            <span className="text-xs font-extrabold text-amber-800">📊 当前加成</span>
+            <span className="text-xs font-bold text-orange-700 bg-orange-100 px-2 py-0.5 rounded-full">
+              👨‍🍳 速度 +{cookBonusPct}%
+            </span>
+            <span className="text-xs font-bold text-sky-700 bg-sky-100 px-2 py-0.5 rounded-full">
+              💁 耐心 +{patienceBonusPct}%
+            </span>
+            <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+              💰 金币 +{coinBonusPct}%
             </span>
           </div>
           <div className="flex-1" />
@@ -92,6 +147,7 @@ export const DormitoryModule = () => {
                       const def = getCatEmployeeById(emp.catDefId)
                       const role = roleLabels[def?.role || 'chef']
                       const stationBonus = (emp.level - 1) * 5
+                      const isOnDuty = emp.status === 'working' && emp.currentShift === currentShiftOfDay
                       return (
                         <motion.div
                           key={emp.id}
@@ -100,6 +156,11 @@ export const DormitoryModule = () => {
                           transition={{ delay: i * 0.1 }}
                           className={`rounded-2xl p-5 border-2 bg-gradient-to-br ${role.color} border-white shadow-xl relative overflow-hidden`}
                         >
+                          {isOnDuty && (
+                            <div className="absolute top-3 right-3 z-20 bg-green-500 text-white text-xs font-extrabold px-3 py-1 rounded-full shadow-lg flex items-center gap-1 animate-pulse">
+                              <Check size={12} /> 在岗中
+                            </div>
+                          )}
                           <div className="absolute -right-6 -top-6 text-[120px] opacity-10 rotate-12">
                             {def?.emoji}
                           </div>
@@ -198,6 +259,84 @@ export const DormitoryModule = () => {
                               </div>
                               <div className="text-[11px] text-stone-600 mt-2 italic border-t border-stone-300 pt-2">
                                 &ldquo;{def?.description}&rdquo;
+                              </div>
+                            </div>
+
+                            <div className="bg-white/70 rounded-xl p-3 mb-3 border-2 border-indigo-200">
+                              <div className="text-xs font-extrabold text-indigo-800 mb-2.5 flex items-center gap-1.5">
+                                📅 排班表
+                              </div>
+                              <div className="grid grid-cols-4 gap-1.5">
+                                <div />
+                                {stations.map((st) => (
+                                  <div
+                                    key={st.id}
+                                    className="text-center text-[10px] font-bold text-stone-500 py-1"
+                                  >
+                                    {st.short}
+                                  </div>
+                                ))}
+                                {shifts.map((sh) => (
+                                  <React.Fragment key={sh.id}>
+                                    <div
+                                      className="flex items-center justify-center text-xs font-bold text-stone-600 pr-1"
+                                    >
+                                      <span className="mr-1">{sh.icon}</span>
+                                      <span className="text-[10px]">{sh.name}</span>
+                                    </div>
+                                    {stations.map((st) => {
+                                      const empShift = getEmployeeShift(emp.id, sh.id)
+                                      const isScheduled = !!empShift
+                                      const stationMatch = empShift?.station === st.id
+                                      const correctRole =
+                                        (st.id === 'kitchen' && def?.role === 'chef') ||
+                                        (st.id === 'floor' && def?.role === 'waiter') ||
+                                        (st.id === 'register' && def?.role === 'cashier')
+                                      return (
+                                        <button
+                                          key={`${sh.id}-${st.id}`}
+                                          onClick={() => handleShiftCellClick(emp.id, sh.id, st.id)}
+                                          className={clsx(
+                                            'w-11 h-11 rounded-xl flex items-center justify-center transition-all border-2 font-extrabold text-base',
+                                            isScheduled && stationMatch
+                                              ? correctRole
+                                                ? 'bg-green-500 border-green-700 text-white shadow-md hover:bg-green-600'
+                                                : 'bg-red-200 border-red-400 text-red-700 hover:bg-red-300'
+                                              : 'bg-stone-100 border-stone-300 text-stone-400 hover:bg-indigo-100 hover:border-indigo-400 hover:text-indigo-600'
+                                          )}
+                                          title={
+                                            isScheduled && stationMatch
+                                              ? correctRole
+                                                ? `${sh.name} - ${st.name} (排班)`
+                                                : `${sh.name} - ${st.name} (班次不匹配)`
+                                              : `点击排班：${sh.name} - ${st.name}`
+                                          }
+                                        >
+                                          {isScheduled && stationMatch ? (
+                                            correctRole ? (
+                                              <Check size={18} />
+                                            ) : (
+                                              '!'
+                                            )
+                                          ) : (
+                                            <span className="text-stone-300 text-lg">·</span>
+                                          )}
+                                        </button>
+                                      )
+                                    })}
+                                  </React.Fragment>
+                                ))}
+                              </div>
+                              <div className="mt-2 pt-2 border-t border-stone-200 flex flex-wrap gap-2 text-[10px]">
+                                <span className="flex items-center gap-1">
+                                  <span className="w-3 h-3 rounded bg-green-500" /> 已排班
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  <span className="w-3 h-3 rounded bg-red-200 border border-red-400" /> 岗位不匹配
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  <span className="w-3 h-3 rounded bg-stone-100 border border-stone-300" /> 未排班
+                                </span>
                               </div>
                             </div>
 

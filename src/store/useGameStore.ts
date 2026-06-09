@@ -14,6 +14,10 @@ import type {
   GameSettings,
   ActiveDecor,
   Statistics,
+  WorkShift,
+  EmployeeShift,
+  CookingQueueItem,
+  CustomerReview,
 } from '@/types'
 import { RECIPES, getRecipeById } from '@/data/recipes'
 import { DEFAULT_INVENTORY } from '@/data/ingredients'
@@ -42,6 +46,9 @@ const INITIAL_STATISTICS: Statistics = {
   busiestDay: 0,
   perfectDayCount: 0,
   playTimeSeconds: 0,
+  totalExcellentReviews: 0,
+  totalGoodReviews: 0,
+  totalPoorReviews: 0,
 }
 
 const INITIAL_ACTIVE_DECOR: ActiveDecor = {
@@ -94,6 +101,10 @@ interface GameStore extends GameState {
   clearPrep: (station: 'oven' | 'pot' | 'fridge') => void
   startCookingFromPrep: (station: 'oven' | 'pot' | 'fridge', slotIndex: number) => boolean
 
+  addCookingQueueItem: (recipeId: string, count?: number) => boolean
+  cancelCookingQueueItem: (queueId: string) => void
+  processCookingQueue: () => void
+
   buyIngredient: (ingredientId: string, amount: number) => boolean
   upgradeStation: (station: 'oven' | 'pot' | 'fridge') => boolean
   unlockRecipe: (recipeId: string) => boolean
@@ -101,6 +112,9 @@ interface GameStore extends GameState {
   hireEmployee: (catDefId: string) => boolean
   setEmployeeStatus: (empId: string, status: Employee['status']) => void
   assignEmployeeStation: (empId: string, station: Employee['assignedStation']) => void
+  setEmployeeShift: (empId: string, shift: WorkShift, station: EmployeeShift['station']) => void
+  removeEmployeeShift: (empId: string) => void
+  getShiftBonuses: () => { cookSpeedBonus: number; patienceBonus: number; coinBonus: number }
 
   buyDecor: (decorId: string) => boolean
   applyDecor: (decorId: string) => void
@@ -111,6 +125,7 @@ interface GameStore extends GameState {
   triggerDelivery: () => void
   deliverDelivery: () => boolean
   completeDelivery: () => void
+  addCustomerReview: (review: Omit<CustomerReview, 'id' | 'createdAt'>) => void
 
   tickGame: (deltaMs: number) => void
   nextDay: () => void
@@ -149,9 +164,23 @@ const createInitialEmployees = (): Employee[] => {
       energy: 100,
       maxEnergy: 100,
       assignedStation: 'kitchen',
+      currentShift: 'morning',
       hiredAt: Date.now(),
     },
   ]
+}
+
+const getShiftByTime = (timeMin: number): WorkShift => {
+  if (timeMin < 720) return 'morning'
+  if (timeMin < 1080) return 'afternoon'
+  return 'evening'
+}
+
+const REVIEW_COMMENTS = {
+  excellent: ['太美味了！下次还来！', '服务超棒，点心好吃！', '五星好评，强烈推荐！'],
+  good: ['味道不错，下次再来~', '还行，挺满意的', '环境好，食物也不错'],
+  average: ['一般般吧，中规中矩', '等了挺久的', '没有想象中那么好吃'],
+  poor: ['等太久了，下次不来了', '东西不对，不满意', '体验很差，差评！'],
 }
 
 const createInitialCookingPreps = (): GameState['cookingPreps'] => [
@@ -170,6 +199,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   reputation: 0,
   day: 1,
   timeOfDay: 480,
+  currentShiftOfDay: 'morning',
 
   unlockedRecipeIds: ['donut-plain', 'donut-chocolate', 'tea-milk', 'pudding-egg'],
   inventory: { ...DEFAULT_INVENTORY },
@@ -181,9 +211,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
   orders: [],
   cookingSlots: createInitialCookingSlots(),
   cookingPreps: createInitialCookingPreps(),
+  cookingQueue: [],
   preparedItems: [],
 
   employees: createInitialEmployees(),
+  shiftSchedule: [],
   ownedCatIds: ['cat-chef-1'],
 
   ownedDecorIds: ['wall-cream', 'floor-wood', 'table-wood', 'chair-wood', 'deco-plant'],
@@ -191,6 +223,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   unlockedCustomerStoryIds: [],
   achievements: INITIAL_ACHIEVEMENTS.map((a) => ({ ...a })),
+  customerReviews: [],
   statistics: { ...INITIAL_STATISTICS },
   dailyGoals: INITIAL_DAILY_GOALS.map((g) => ({ ...g })),
 
@@ -221,6 +254,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       reputation: 0,
       day: 1,
       timeOfDay: 480,
+      currentShiftOfDay: 'morning',
       unlockedRecipeIds: ['donut-plain', 'donut-chocolate', 'tea-milk', 'pudding-egg'],
       inventory: { ...DEFAULT_INVENTORY },
       ovenLevel: 1,
@@ -230,13 +264,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
       orders: [],
       cookingSlots: createInitialCookingSlots(),
       cookingPreps: createInitialCookingPreps(),
+      cookingQueue: [],
       preparedItems: [],
       employees: newEmployees,
+      shiftSchedule: [],
       ownedCatIds: ['cat-chef-1'],
       ownedDecorIds: ['wall-cream', 'floor-wood', 'table-wood', 'chair-wood', 'deco-plant'],
       activeDecor: { ...INITIAL_ACTIVE_DECOR },
       unlockedCustomerStoryIds: [],
       achievements: INITIAL_ACHIEVEMENTS.map((a) => ({ ...a })),
+      customerReviews: [],
       statistics: { ...INITIAL_STATISTICS },
       dailyGoals: INITIAL_DAILY_GOALS.map((g) => ({ ...g })),
       deliveryOrder: null,
@@ -257,6 +294,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (!migrated.cookingPreps || migrated.cookingPreps.length === 0) {
         migrated.cookingPreps = createInitialCookingPreps()
       }
+      migrated.cookingQueue = migrated.cookingQueue || []
+      migrated.shiftSchedule = migrated.shiftSchedule || []
+      migrated.customerReviews = migrated.customerReviews || []
+      migrated.currentShiftOfDay = migrated.currentShiftOfDay || getShiftByTime(migrated.timeOfDay || 480)
+
       if (migrated.employees) {
         migrated.employees = migrated.employees.map((e) => ({
           ...e,
@@ -264,6 +306,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
           energy: typeof e.energy === 'number' ? e.energy : 100,
           maxEnergy: e.maxEnergy || 100,
           status: e.status || 'working',
+          currentShift: e.currentShift || null,
+          assignedStation: e.assignedStation || null,
         }))
       }
       if (migrated.statistics) {
@@ -271,6 +315,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
           ...INITIAL_STATISTICS,
           ...migrated.statistics,
           totalDeliveriesCompleted: migrated.statistics.totalDeliveriesCompleted || 0,
+          totalExcellentReviews: migrated.statistics.totalExcellentReviews || 0,
+          totalGoodReviews: migrated.statistics.totalGoodReviews || 0,
+          totalPoorReviews: migrated.statistics.totalPoorReviews || 0,
         }
       } else {
         migrated.statistics = { ...INITIAL_STATISTICS }
@@ -383,8 +430,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return false
     })
     const def = randomChoice(availableCustomers)
+    const bonuses = get().getShiftBonuses()
     const difficultyMult = state.settings.difficulty === 'relaxed' ? 1.3 : 0.9
-    const maxPatience = Math.floor((30000 + randomInt(0, 20000)) * def.patienceMultiplier * difficultyMult)
+    const patienceMult = 1 + bonuses.patienceBonus
+    const maxPatience = Math.floor((30000 + randomInt(0, 20000)) * def.patienceMultiplier * difficultyMult * patienceMult)
     const instance: CustomerInstance = {
       instanceId: 'cust-' + uid(),
       customerDefId: def.id,
@@ -434,18 +483,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   deliverOrder: (orderId, recipeIds) => {
+    const orderRef = get().orders.find((o) => o.id === orderId)
+    const customerRef = orderRef ? get().customers.find((c) => c.instanceId === orderRef.customerInstanceId) : null
+    const patienceRatio = customerRef ? customerRef.patience / customerRef.maxPatience : 0.5
+    const itemsComplete = recipeIds.length >= (orderRef?.recipeIds.length || 0)
+
     set((s) => {
       const order = s.orders.find((o) => o.id === orderId)
       if (!order) return {}
       const customer = s.customers.find((c) => c.instanceId === order.customerInstanceId)
       if (!customer) return {}
       const allDelivered = recipeIds.length >= order.recipeIds.length
-      const patienceRatio = customer.patience / customer.maxPatience
+      const pRatio = customer.patience / customer.maxPatience
       let multiplier = 1
-      if (patienceRatio > 0.6) multiplier = 1.2
-      else if (patienceRatio < 0.2) multiplier = 0.6
-      const reward = Math.floor(order.baseReward * multiplier)
-      const gotTip = Math.random() < order.tipChance * patienceRatio
+      if (pRatio > 0.6) multiplier = 1.2
+      else if (pRatio < 0.2) multiplier = 0.6
+      const bonuses = get().getShiftBonuses()
+      const coinMultiplier = 1 + bonuses.coinBonus
+      const baseReward = Math.floor(order.baseReward * multiplier)
+      const reward = Math.floor(baseReward * coinMultiplier)
+      const gotTip = Math.random() < order.tipChance * pRatio
       const tip = gotTip ? Math.floor(reward * randomInt(20, 50) / 100) : 0
       const newCustomers = s.customers.map((c) =>
         c.instanceId === customer.instanceId
@@ -460,11 +517,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
         if (g.id === 'goal-1') cur += 1
         return { ...g, current: cur, completed: cur >= g.target }
       })
+      const repGain = multiplier >= 1 ? 3 : multiplier >= 0.6 ? 1 : -1
       return {
         orders: newOrders,
         customers: newCustomers,
         coins: s.coins + reward + tip,
-        reputation: s.reputation + (multiplier >= 1 ? 3 : multiplier >= 0.6 ? 1 : -1),
+        reputation: s.reputation + repGain,
         statistics: {
           ...s.statistics,
           totalCoinsEarned: s.statistics.totalCoinsEarned + reward + tip,
@@ -474,6 +532,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
         dailyGoals: newGoals,
       }
     })
+
+    // 生成好评/差评
+    let rating: CustomerReview['rating'] = 'average'
+    if (patienceRatio > 0.7 && itemsComplete) rating = 'excellent'
+    else if (patienceRatio > 0.4) rating = 'good'
+    else if (patienceRatio < 0.2 || !itemsComplete) rating = 'poor'
+    const comments = REVIEW_COMMENTS[rating]
+    get().addCustomerReview({
+      orderId,
+      customerDefId: customerRef?.customerDefId || 'cat-orange',
+      isDelivery: false,
+      rating,
+      comment: comments[randomInt(0, comments.length - 1)],
+      patienceLeft: Math.floor(patienceRatio * 100),
+      itemsComplete,
+    })
+
     get().showToast({
       type: 'success',
       title: '订单完成！',
@@ -517,6 +592,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   customerLeave: (customerInstanceId, happy) => {
+    const custBefore = get().customers.find((c) => c.instanceId === customerInstanceId)
+    const orderBefore = custBefore ? get().orders.find((o) => o.customerInstanceId === customerInstanceId) : null
+    const patienceRatio = custBefore ? custBefore.patience / custBefore.maxPatience : 0
+    if (!happy && custBefore && orderBefore) {
+      // 生气离开 → 差评
+      const comments = REVIEW_COMMENTS.poor
+      get().addCustomerReview({
+        orderId: orderBefore.id,
+        customerDefId: custBefore.customerDefId,
+        isDelivery: false,
+        rating: 'poor',
+        comment: comments[randomInt(0, comments.length - 1)],
+        patienceLeft: Math.floor(patienceRatio * 100),
+        itemsComplete: false,
+      })
+    }
     set((s) => {
       const customer = s.customers.find((c) => c.instanceId === customerInstanceId)
       if (!customer) return {}
@@ -545,6 +636,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   cancelOrder: (orderId) => {
+    const orderBefore = get().orders.find((o) => o.id === orderId)
+    if (orderBefore && !orderBefore.isDelivery) {
+      const customer = get().customers.find((c) => c.instanceId === orderBefore.customerInstanceId)
+      const comments = REVIEW_COMMENTS.poor
+      get().addCustomerReview({
+        orderId,
+        customerDefId: customer?.customerDefId || 'cat-orange',
+        isDelivery: false,
+        rating: 'poor',
+        comment: comments[randomInt(0, comments.length - 1)],
+        patienceLeft: 0,
+        itemsComplete: false,
+      })
+    }
     set((s) => {
       const order = s.orders.find((o) => o.id === orderId)
       if (!order) return {}
@@ -594,8 +699,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     recipe.ingredientIds.forEach((id) => {
       inv[id] = (inv[id] || 0) - 1
     })
-    const speedBonus = stationLevel * 0.08
-    const cookTime = Math.floor(recipe.cookTime / (1 + speedBonus))
+    const bonuses = get().getShiftBonuses()
+    const stationSpeedBonus = stationLevel * 0.08
+    const totalSpeedBonus = stationSpeedBonus + (correctStation === 'oven' || correctStation === 'pot' || correctStation === 'fridge' ? bonuses.cookSpeedBonus : 0)
+    const cookTime = Math.floor(recipe.cookTime / (1 + totalSpeedBonus))
     const slots = [...state.cookingSlots]
     slots[slotIndex] = {
       ...slot,
@@ -709,8 +816,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return false
     }
     const stationLevel = station === 'oven' ? state.ovenLevel : station === 'pot' ? state.potLevel : state.fridgeLevel
-    const speedBonus = stationLevel * 0.08
-    const cookTime = Math.floor(recipe.cookTime / (1 + speedBonus))
+    const bonuses = get().getShiftBonuses()
+    const totalSpeedBonus = stationLevel * 0.08 + bonuses.cookSpeedBonus
+    const cookTime = Math.floor(recipe.cookTime / (1 + totalSpeedBonus))
     const slots = [...state.cookingSlots]
     slots[slotIndex] = {
       ...slot,
@@ -774,6 +882,105 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const recipe = getRecipeById(slot.recipeId)
     get().showToast({ type: 'success', title: `${recipe?.name || '点心'}做好啦！`, emoji: recipe?.emoji || '✨', duration: 1200 })
     get().checkAchievements()
+    setTimeout(() => get().processCookingQueue(), 50)
+  },
+
+  addCookingQueueItem: (recipeId, count = 1) => {
+    const state = get()
+    const recipe = getRecipeById(recipeId)
+    if (!recipe) return false
+    if (!state.unlockedRecipeIds.includes(recipeId)) {
+      get().showToast({ type: 'warning', title: '还未解锁该食谱！', duration: 1500 })
+      return false
+    }
+    const stationType: 'oven' | 'pot' | 'fridge' =
+      recipe.category === 'donut' ? 'oven' : recipe.category === 'tea' ? 'pot' : 'fridge'
+    const stationLevel = stationType === 'oven' ? state.ovenLevel : stationType === 'pot' ? state.potLevel : state.fridgeLevel
+    if (recipe.requiredLevel > stationLevel) {
+      get().showToast({ type: 'warning', title: '炉具等级不够！', duration: 1500 })
+      return false
+    }
+    const added: CookingQueueItem[] = []
+    const inv = { ...state.inventory }
+    for (let i = 0; i < count; i++) {
+      const hasAll = recipe.ingredientIds.every((id) => (inv[id] || 0) > 0)
+      if (!hasAll) break
+      recipe.ingredientIds.forEach((id) => {
+        inv[id] = (inv[id] || 0) - 1
+      })
+      added.push({
+        id: 'queue-' + uid(),
+        recipeId,
+        stationType,
+        queuedAt: Date.now(),
+        status: 'queued',
+        slotIndex: null,
+      })
+    }
+    if (added.length === 0) {
+      get().showToast({ type: 'warning', title: '食材不足，无法加入队列！', duration: 1500 })
+      return false
+    }
+    set({ inventory: inv, cookingQueue: [...state.cookingQueue, ...added] })
+    get().showToast({
+      type: 'success',
+      title: `已加入 ${added.length} 份 ${recipe.name} 到制作队列`,
+      emoji: '📋',
+      duration: 1500,
+    })
+    get().processCookingQueue()
+    return true
+  },
+
+  cancelCookingQueueItem: (queueId) => {
+    const state = get()
+    const item = state.cookingQueue.find((q) => q.id === queueId)
+    if (!item) return
+    if (item.status === 'cooking') {
+      get().showToast({ type: 'warning', title: '已经在做的不能取消啦！', duration: 1500 })
+      return
+    }
+    const recipe = getRecipeById(item.recipeId)
+    if (recipe) {
+      const inv = { ...state.inventory }
+      recipe.ingredientIds.forEach((id) => {
+        inv[id] = (inv[id] || 0) + 1
+      })
+      set({ inventory: inv })
+    }
+    set({ cookingQueue: state.cookingQueue.filter((q) => q.id !== queueId) })
+    get().showToast({ type: 'info', title: '已取消，材料退回库存', emoji: '↩️', duration: 1200 })
+  },
+
+  processCookingQueue: () => {
+    const state = get()
+    const slots = [...state.cookingSlots]
+    const queue = [...state.cookingQueue]
+    const bonuses = get().getShiftBonuses()
+    let changed = false
+    for (let i = 0; i < queue.length; i++) {
+      const q = queue[i]
+      if (q.status !== 'queued') continue
+      const freeSlotIdx = slots.findIndex((s) => s.stationType === q.stationType && !s.recipeId)
+      if (freeSlotIdx < 0) continue
+      const recipe = getRecipeById(q.recipeId)
+      if (!recipe) continue
+      const stationLevel = q.stationType === 'oven' ? state.ovenLevel : q.stationType === 'pot' ? state.potLevel : state.fridgeLevel
+      const totalSpeedBonus = stationLevel * 0.08 + bonuses.cookSpeedBonus
+      const cookTime = Math.floor(recipe.cookTime / (1 + totalSpeedBonus))
+      slots[freeSlotIdx] = {
+        ...slots[freeSlotIdx],
+        recipeId: q.recipeId,
+        startTime: Date.now(),
+        endTime: Date.now() + cookTime,
+        progress: 0,
+      }
+      queue[i] = { ...q, status: 'cooking', slotIndex: freeSlotIdx }
+      changed = true
+    }
+    if (changed) {
+      set({ cookingSlots: slots, cookingQueue: queue })
+    }
   },
 
   buyIngredient: (ingredientId, amount) => {
@@ -824,6 +1031,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const cat = getCatEmployeeById(catDefId)
     if (!cat) return false
     if (!get().spendCoins(cat.baseCost)) return false
+    const station: 'kitchen' | 'floor' | 'register' =
+      cat.role === 'chef' ? 'kitchen' : cat.role === 'waiter' ? 'floor' : 'register'
     const newEmp: Employee = {
       id: 'emp-' + uid(),
       catDefId,
@@ -834,12 +1043,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
       status: 'working',
       energy: cat.baseStamina,
       maxEnergy: cat.baseStamina,
-      assignedStation: cat.role === 'chef' ? 'kitchen' : cat.role === 'waiter' ? 'floor' : 'register',
+      assignedStation: station,
+      currentShift: 'morning',
       hiredAt: Date.now(),
     }
+    // 自动加入排班表
+    const defaultShift: EmployeeShift = { employeeId: newEmp.id, shift: 'morning', station }
     set((s) => ({
       employees: [...s.employees, newEmp],
       ownedCatIds: [...s.ownedCatIds, catDefId],
+      shiftSchedule: [...s.shiftSchedule, defaultShift],
     }))
     get().showToast({ type: 'success', title: `${newEmp.nickname}加入了店铺！`, emoji: cat.emoji, duration: 2000 })
     get().checkAchievements()
@@ -855,6 +1068,64 @@ export const useGameStore = create<GameStore>((set, get) => ({
   assignEmployeeStation: (empId, station) => {
     set((s) => ({
       employees: s.employees.map((e) => (e.id === empId ? { ...e, assignedStation: station } : e)),
+    }))
+  },
+
+  setEmployeeShift: (empId, shift, station) => {
+    set((s) => {
+      const otherShifts = s.shiftSchedule.filter((sh) => !(sh.employeeId === empId && sh.shift === shift))
+      const newShift: EmployeeShift = { employeeId: empId, shift, station }
+      return {
+        shiftSchedule: [...otherShifts, newShift],
+        employees: s.employees.map((e) =>
+          e.id === empId ? { ...e, assignedStation: station, currentShift: shift } : e
+        ),
+      }
+    })
+    get().showToast({ type: 'info', title: '排班已更新', emoji: '📅', duration: 1200 })
+  },
+
+  removeEmployeeShift: (empId) => {
+    set((s) => ({
+      shiftSchedule: s.shiftSchedule.filter((sh) => sh.employeeId !== empId),
+      employees: s.employees.map((e) => (e.id === empId ? { ...e, currentShift: null, assignedStation: null } : e)),
+    }))
+  },
+
+  getShiftBonuses: () => {
+    const state = get()
+    const currentShift = state.currentShiftOfDay
+    const onDuty = state.employees.filter((e) => {
+      if (e.status !== 'working') return false
+      if (e.currentShift !== currentShift) return false
+      if (e.energy < 20) return false
+      return true
+    })
+    let cookSpeedBonus = 0
+    let patienceBonus = 0
+    let coinBonus = 0
+    for (const e of onDuty) {
+      const cat = getCatEmployeeById(e.catDefId)
+      if (!cat) continue
+      const levelBonus = (e.level - 1) * 0.05
+      if (e.assignedStation === 'kitchen' && cat.role === 'chef') cookSpeedBonus += 0.05 + levelBonus
+      if (e.assignedStation === 'floor' && cat.role === 'waiter') patienceBonus += 0.08 + levelBonus
+      if (e.assignedStation === 'register' && cat.role === 'cashier') coinBonus += 0.05 + levelBonus
+    }
+    return { cookSpeedBonus, patienceBonus, coinBonus }
+  },
+
+  addCustomerReview: (review) => {
+    const state = get()
+    const r: CustomerReview = { ...review, id: 'review-' + uid(), createdAt: Date.now() }
+    set((s) => ({
+      customerReviews: [r, ...s.customerReviews].slice(0, 100),
+      statistics: {
+        ...s.statistics,
+        totalExcellentReviews: s.statistics.totalExcellentReviews + (r.rating === 'excellent' ? 1 : 0),
+        totalGoodReviews: s.statistics.totalGoodReviews + (r.rating === 'good' || r.rating === 'excellent' ? 1 : 0),
+        totalPoorReviews: s.statistics.totalPoorReviews + (r.rating === 'poor' ? 1 : 0),
+      },
     }))
   },
 
@@ -954,18 +1225,31 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   completeDelivery: () => {
+    const bonuses = get().getShiftBonuses()
+    const coinMult = 1 + bonuses.coinBonus
     set((s) => {
       if (!s.deliveryOrder) return {}
       const order = s.deliveryOrder
       const gotTip = Math.random() < order.tipChance
-      const tip = gotTip ? Math.floor(order.baseReward * 0.4) : 0
+      const base = Math.floor(order.baseReward * coinMult)
+      const tip = gotTip ? Math.floor(base * 0.4) : 0
+      const reviews = REVIEW_COMMENTS.good
+      get().addCustomerReview({
+        orderId: order.id,
+        customerDefId: 'cat-delivery',
+        isDelivery: true,
+        rating: 'excellent',
+        comment: reviews[randomInt(0, reviews.length - 1)],
+        patienceLeft: 100,
+        itemsComplete: true,
+      })
       return {
         deliveryOrder: null,
-        coins: s.coins + order.baseReward + tip,
+        coins: s.coins + base + tip,
         reputation: s.reputation + 5,
         statistics: {
           ...s.statistics,
-          totalCoinsEarned: s.statistics.totalCoinsEarned + order.baseReward + tip,
+          totalCoinsEarned: s.statistics.totalCoinsEarned + base + tip,
           totalTipsReceived: s.statistics.totalTipsReceived + tip,
           totalOrdersCompleted: s.statistics.totalOrdersCompleted + 1,
           totalDeliveriesCompleted: s.statistics.totalDeliveriesCompleted + 1,
@@ -981,10 +1265,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (state.isPaused || !state.currentSlotId) return
     const diffMult = state.settings.difficulty === 'relaxed' ? 0.85 : 1.15
     const deltaSeconds = deltaMs / 1000
+    const bonuses = get().getShiftBonuses()
+    const patienceSlowdown = 1 + bonuses.patienceBonus
+
+    const newTimeOfDay = state.timeOfDay + deltaSeconds
+    const newShift = getShiftByTime(newTimeOfDay)
+    let shiftChanged: WorkShift | null = null
+    if (newShift !== state.currentShiftOfDay) {
+      shiftChanged = newShift
+    }
 
     set((s) => {
       const customers = s.customers.map((c) => {
-        let patience = c.patience - deltaMs * diffMult
+        let patience = c.patience - (deltaMs * diffMult) / patienceSlowdown
         let mood: CustomerInstance['mood'] = c.mood
         let status: CustomerInstance['status'] = c.status
         const ratio = patience / c.maxPatience
@@ -998,12 +1291,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
         return { ...c, patience, mood, status }
       })
 
-      const employees = s.employees.map((e) => {
+      let employees = s.employees.map((e) => {
         let energy = e.energy
         let exp = e.exp
         let level = e.level
         let expToNext = e.expToNext
         let status: Employee['status'] = e.status
+
+        // 班次切换：如果员工在这个新班次有排班，设置为working并应用岗位
+        let currentShift = e.currentShift
+        let assignedStation = e.assignedStation
+        if (shiftChanged) {
+          const todayShift = s.shiftSchedule.find((sh) => sh.employeeId === e.id && sh.shift === shiftChanged)
+          if (todayShift) {
+            currentShift = shiftChanged
+            assignedStation = todayShift.station
+            if (energy >= 20) status = 'working'
+          } else if (currentShift === s.currentShiftOfDay && e.status === 'working') {
+            // 这个班次结束了，下班休息
+            currentShift = null
+            assignedStation = null
+            status = 'resting'
+          }
+        }
 
         if (status === 'working') {
           energy -= deltaSeconds * 1.2
@@ -1018,8 +1328,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           if (status === 'tired' && energy >= e.maxEnergy * 0.6) {
             status = 'resting'
           }
-          if (energy >= e.maxEnergy) {
-            energy = e.maxEnergy
+          if (energy >= e.maxEnergy && currentShift === (shiftChanged || s.currentShiftOfDay)) {
             status = 'working'
           }
         }
@@ -1030,19 +1339,25 @@ export const useGameStore = create<GameStore>((set, get) => ({
           expToNext = Math.floor(100 * Math.pow(1.3, level - 1))
         }
 
-        return { ...e, energy, exp, level, expToNext, status }
+        return { ...e, energy, exp, level, expToNext, status, currentShift, assignedStation }
       })
 
       return {
         customers,
         employees,
-        timeOfDay: s.timeOfDay + deltaSeconds,
+        timeOfDay: newTimeOfDay,
+        currentShiftOfDay: shiftChanged || s.currentShiftOfDay,
         statistics: {
           ...s.statistics,
           playTimeSeconds: s.statistics.playTimeSeconds + deltaSeconds,
         },
       }
     })
+
+    if (shiftChanged) {
+      const shiftName = shiftChanged === 'morning' ? '上午' : shiftChanged === 'afternoon' ? '下午' : '晚上'
+      get().showToast({ type: 'info', title: `进入${shiftName}班次`, emoji: '⏰', duration: 1800 })
+    }
 
     const leveledAny = get().employees.some((e, i) => e.level !== state.employees[i]?.level)
     if (leveledAny) {
@@ -1054,6 +1369,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
 
     get().updateCooking()
+    get().processCookingQueue()
     const angry = get().customers.filter((c) => c.status === 'angry')
     angry.forEach((c) => get().customerLeave(c.instanceId, false))
   },
@@ -1061,11 +1377,34 @@ export const useGameStore = create<GameStore>((set, get) => ({
   nextDay: () => {
     set((s) => {
       const perfectDay = s.customers.filter((c) => c.mood === 'unhappy').length === 0 && s.day > 1
+      const employees = s.employees.map((e) => {
+        const morningShift = s.shiftSchedule.find((sh) => sh.employeeId === e.id && sh.shift === 'morning')
+        const status: Employee['status'] = morningShift && e.energy >= 20 ? 'working' : 'resting'
+        return {
+          ...e,
+          currentShift: morningShift ? ('morning' as WorkShift) : null,
+          assignedStation: morningShift ? morningShift.station : null,
+          status,
+          energy: Math.min(e.maxEnergy, e.energy + 30),
+        }
+      })
+      // 清理队列（还没做的退材料）
+      const inv = { ...s.inventory }
+      for (const q of s.cookingQueue) {
+        if (q.status === 'queued') {
+          const r = getRecipeById(q.recipeId)
+          if (r) r.ingredientIds.forEach((id) => { inv[id] = (inv[id] || 0) + 1 })
+        }
+      }
       return {
         day: s.day + 1,
         timeOfDay: 480,
+        currentShiftOfDay: 'morning' as WorkShift,
         customers: [],
         orders: [],
+        employees,
+        cookingQueue: s.cookingQueue.filter((q) => q.status === 'cooking'),
+        inventory: inv,
         dailyGoals: INITIAL_DAILY_GOALS.map((g) => ({ ...g, id: 'goal-' + uid() })),
         statistics: {
           ...s.statistics,

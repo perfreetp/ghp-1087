@@ -15,6 +15,7 @@ export const CollectionModule = () => {
   const unlockedStories = useGameStore((s) => s.unlockedCustomerStoryIds)
   const achievements = useGameStore((s) => s.achievements)
   const statistics = useGameStore((s) => s.statistics)
+  const customerReviews = useGameStore((s) => s.customerReviews)
   const unlockedRecipeIds = useGameStore((s) => s.unlockedRecipeIds)
   const reputation = useGameStore((s) => s.reputation)
   const day = useGameStore((s) => s.day)
@@ -51,6 +52,30 @@ export const CollectionModule = () => {
   const unlockedAchievements = achievements.filter((a) => a.unlocked).length
 
   const selectedCustomer = selectedStory ? getCustomerById(selectedStory) : null
+
+  const totalReviews = statistics.totalGoodReviews + statistics.totalPoorReviews
+  const goodRate = totalReviews > 0 ? Math.floor((statistics.totalGoodReviews / totalReviews) * 100) : null
+
+  const ratingStars: Record<string, string> = {
+    excellent: '⭐⭐⭐⭐⭐',
+    good: '⭐⭐⭐⭐',
+    average: '⭐⭐⭐',
+    poor: '⭐⭐',
+  }
+  const ratingColors: Record<string, string> = {
+    excellent: 'text-green-600',
+    good: 'text-blue-600',
+    average: 'text-gray-500',
+    poor: 'text-red-600',
+  }
+
+  const goodRateClass = goodRate === null
+    ? 'text-stone-500'
+    : goodRate >= 80
+      ? 'text-green-700 font-extrabold'
+      : goodRate >= 60
+        ? 'text-blue-700'
+        : 'text-orange-600'
 
   return (
     <div className="h-full w-full">
@@ -268,6 +293,9 @@ export const CollectionModule = () => {
                         { label: '制作点心总数', value: statistics.totalRecipesCooked, emoji: '🍳' },
                         { label: '完美天数', value: statistics.perfectDayCount, emoji: '☀️' },
                         { label: '游戏时长', value: `${Math.floor(statistics.playTimeSeconds / 60)} 分钟`, emoji: '⏱️' },
+                        { label: '⭐ 优秀评价', value: `${statistics.totalExcellentReviews} 次`, emoji: '⭐' },
+                        { label: '👍 良好评价', value: `${statistics.totalGoodReviews - statistics.totalExcellentReviews} 次`, emoji: '👍' },
+                        { label: '👎 差评', value: `${statistics.totalPoorReviews} 次`, emoji: '👎' },
                       ].map((row, i) => (
                         <motion.div
                           key={i}
@@ -280,9 +308,23 @@ export const CollectionModule = () => {
                             <span className="text-xl">{row.emoji}</span>
                             {row.label}
                           </div>
-                          <div className="font-extrabold text-amber-800 tabular-nums">{row.value.toLocaleString()}</div>
+                          <div className="font-extrabold text-amber-800 tabular-nums">{String(row.value).toLocaleString()}</div>
                         </motion.div>
                       ))}
+                      <motion.div
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 11 * 0.06 }}
+                        className="flex items-center justify-between bg-white/70 rounded-xl px-4 py-2.5 border-2 border-amber-200"
+                      >
+                        <div className="font-bold text-stone-700 flex items-center gap-2 text-sm">
+                          <span className="text-xl">💯</span>
+                          综合好评率
+                        </div>
+                        <div className={clsx('font-extrabold tabular-nums', goodRateClass)}>
+                          {goodRate === null ? '--' : `${goodRate}%`}
+                        </div>
+                      </motion.div>
                     </div>
                   </Card>
 
@@ -314,6 +356,48 @@ export const CollectionModule = () => {
                     </div>
                   </Card>
                 </div>
+
+                <Card variant="default">
+                  <div className="font-extrabold text-stone-800 mb-4 flex items-center gap-2 text-lg">
+                    <span className="text-xl">💬</span> 最近顾客评价
+                    <span className="text-xs font-bold text-stone-400 ml-1">（最多10条）</span>
+                  </div>
+                  {customerReviews.length === 0 ? (
+                    <div className="text-center text-stone-400 text-sm py-8 font-bold">
+                      还没有顾客评价，快去接待顾客吧～ ✨
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {customerReviews.slice(0, 10).map((review, i) => {
+                        const customer = getCustomerById(review.customerDefId)
+                        const emoji = customer?.emoji || '🐱'
+                        const commentShort = review.comment.length > 15
+                          ? review.comment.slice(0, 15) + '...'
+                          : review.comment
+                        return (
+                          <motion.div
+                            key={review.id}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: i * 0.04 }}
+                            className="flex items-center gap-3 bg-gradient-to-r from-amber-50 to-white rounded-xl px-4 py-3 border-2 border-amber-100"
+                          >
+                            <div className="text-3xl shrink-0">
+                              {review.isDelivery && <span className="mr-1">🛵</span>}
+                              {emoji}
+                            </div>
+                            <div className={clsx('shrink-0 font-bold text-sm', ratingColors[review.rating])}>
+                              {ratingStars[review.rating]}
+                            </div>
+                            <div className="flex-1 min-w-0 text-sm text-stone-700 font-medium truncate">
+                              {commentShort}
+                            </div>
+                          </motion.div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </Card>
               </motion.div>
             )}
 

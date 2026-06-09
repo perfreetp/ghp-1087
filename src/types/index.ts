@@ -89,6 +89,14 @@ export interface CatEmployeeDefinition {
   skills: string[]
 }
 
+export type WorkShift = 'morning' | 'afternoon' | 'evening'
+
+export interface EmployeeShift {
+  employeeId: string
+  shift: WorkShift
+  station: 'kitchen' | 'floor' | 'register'
+}
+
 export interface Employee {
   id: string
   catDefId: string
@@ -100,7 +108,29 @@ export interface Employee {
   energy: number
   maxEnergy: number
   assignedStation: 'kitchen' | 'floor' | 'register' | null
+  currentShift: WorkShift | null
   hiredAt: number
+}
+
+export interface CookingQueueItem {
+  id: string
+  recipeId: string
+  stationType: 'oven' | 'pot' | 'fridge'
+  queuedAt: number
+  status: 'queued' | 'cooking'
+  slotIndex: number | null
+}
+
+export interface CustomerReview {
+  id: string
+  orderId: string
+  customerDefId: string
+  isDelivery: boolean
+  rating: 'excellent' | 'good' | 'average' | 'poor'
+  comment: string
+  createdAt: number
+  patienceLeft: number
+  itemsComplete: boolean
 }
 
 export interface CookingSlot {
@@ -175,6 +205,9 @@ export interface Statistics {
   busiestDay: number
   perfectDayCount: number
   playTimeSeconds: number
+  totalExcellentReviews: number
+  totalGoodReviews: number
+  totalPoorReviews: number
 }
 
 export interface GameState {
@@ -187,6 +220,7 @@ export interface GameState {
   reputation: number
   day: number
   timeOfDay: number
+  currentShiftOfDay: WorkShift
 
   unlockedRecipeIds: string[]
   inventory: Record<string, number>
@@ -198,9 +232,11 @@ export interface GameState {
   orders: Order[]
   cookingSlots: CookingSlot[]
   cookingPreps: CookingPrep[]
+  cookingQueue: CookingQueueItem[]
   preparedItems: PreparedItem[]
 
   employees: Employee[]
+  shiftSchedule: EmployeeShift[]
   ownedCatIds: string[]
 
   ownedDecorIds: string[]
@@ -208,6 +244,7 @@ export interface GameState {
 
   unlockedCustomerStoryIds: string[]
   achievements: Achievement[]
+  customerReviews: CustomerReview[]
   statistics: Statistics
   dailyGoals: DailyGoal[]
 
