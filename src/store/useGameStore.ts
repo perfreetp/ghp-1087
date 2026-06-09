@@ -35,6 +35,7 @@ const INITIAL_STATISTICS: Statistics = {
   totalCoinsEarned: 0,
   totalCustomersServed: 0,
   totalOrdersCompleted: 0,
+  totalDeliveriesCompleted: 0,
   totalRecipesCooked: 0,
   totalTipsReceived: 0,
   favoriteRecipeId: null,
@@ -87,6 +88,12 @@ interface GameStore extends GameState {
   updateCooking: () => void
   collectCooked: (slotIndex: number) => void
 
+  setPrepRecipe: (station: 'oven' | 'pot' | 'fridge', recipeId: string | null) => void
+  addIngredientToPrep: (station: 'oven' | 'pot' | 'fridge', ingredientId: string) => boolean
+  removeIngredientFromPrep: (station: 'oven' | 'pot' | 'fridge', ingredientIdx: number) => void
+  clearPrep: (station: 'oven' | 'pot' | 'fridge') => void
+  startCookingFromPrep: (station: 'oven' | 'pot' | 'fridge', slotIndex: number) => boolean
+
   buyIngredient: (ingredientId: string, amount: number) => boolean
   upgradeStation: (station: 'oven' | 'pot' | 'fridge') => boolean
   unlockRecipe: (recipeId: string) => boolean
@@ -102,6 +109,7 @@ interface GameStore extends GameState {
   hideToast: () => void
 
   triggerDelivery: () => void
+  deliverDelivery: () => boolean
   completeDelivery: () => void
 
   tickGame: (deltaMs: number) => void
@@ -136,6 +144,7 @@ const createInitialEmployees = (): Employee[] => {
       nickname: starter.name.split('·')[1] || starter.name,
       level: 1,
       exp: 0,
+      expToNext: 100,
       status: 'working',
       energy: 100,
       maxEnergy: 100,
@@ -144,6 +153,12 @@ const createInitialEmployees = (): Employee[] => {
     },
   ]
 }
+
+const createInitialCookingPreps = (): GameState['cookingPreps'] => [
+  { stationType: 'oven', targetRecipeId: null, addedIngredients: [] },
+  { stationType: 'pot', targetRecipeId: null, addedIngredients: [] },
+  { stationType: 'fridge', targetRecipeId: null, addedIngredients: [] },
+]
 
 export const useGameStore = create<GameStore>((set, get) => ({
   settings: { ...INITIAL_SETTINGS },
@@ -165,6 +180,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   customers: [],
   orders: [],
   cookingSlots: createInitialCookingSlots(),
+  cookingPreps: createInitialCookingPreps(),
   preparedItems: [],
 
   employees: createInitialEmployees(),
@@ -199,6 +215,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       day: 1,
       totalPlayTime: 0,
     }
+    const newEmployees = createInitialEmployees()
     const newState: Partial<GameState> = {
       coins: 150,
       reputation: 0,
@@ -212,8 +229,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       customers: [],
       orders: [],
       cookingSlots: createInitialCookingSlots(),
+      cookingPreps: createInitialCookingPreps(),
       preparedItems: [],
-      employees: createInitialEmployees(),
+      employees: newEmployees,
       ownedCatIds: ['cat-chef-1'],
       ownedDecorIds: ['wall-cream', 'floor-wood', 'table-wood', 'chair-wood', 'deco-plant'],
       activeDecor: { ...INITIAL_ACTIVE_DECOR },
@@ -235,7 +253,35 @@ export const useGameStore = create<GameStore>((set, get) => ({
   loadSlot: (slotId) => {
     const data = loadFromStorage<Partial<GameState>>(slotId)
     if (data) {
-      set({ ...data, currentSlotId: slotId, activeModule: 'SHOP' })
+      const migrated: Partial<GameState> = { ...data }
+      if (!migrated.cookingPreps || migrated.cookingPreps.length === 0) {
+        migrated.cookingPreps = createInitialCookingPreps()
+      }
+      if (migrated.employees) {
+        migrated.employees = migrated.employees.map((e) => ({
+          ...e,
+          expToNext: e.expToNext || Math.floor(100 * Math.pow(1.3, (e.level || 1) - 1)),
+          energy: typeof e.energy === 'number' ? e.energy : 100,
+          maxEnergy: e.maxEnergy || 100,
+          status: e.status || 'working',
+        }))
+      }
+      if (migrated.statistics) {
+        migrated.statistics = {
+          ...INITIAL_STATISTICS,
+          ...migrated.statistics,
+          totalDeliveriesCompleted: migrated.statistics.totalDeliveriesCompleted || 0,
+        }
+      } else {
+        migrated.statistics = { ...INITIAL_STATISTICS }
+      }
+      if (migrated.cookingSlots) {
+        migrated.cookingSlots = migrated.cookingSlots.map((s, i) => ({
+          ...s,
+          stationType: s.stationType || (i < 3 ? 'oven' : i < 5 ? 'pot' : 'fridge'),
+        }))
+      }
+      set({ ...migrated, currentSlotId: slotId, activeModule: 'SHOP' })
     }
   },
 
@@ -529,6 +575,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
       get().showToast({ type: 'warning', title: '该位置已被占用', duration: 1500 })
       return false
     }
+    const correctStation = recipe.category === 'donut' ? 'oven' : recipe.category === 'tea' ? 'pot' : 'fridge'
+    const stationName = correctStation === 'oven' ? '烤箱' : correctStation === 'pot' ? '煮锅' : '冰箱'
+    if (slot.stationType !== correctStation) {
+      get().showToast({ type: 'warning', title: `${recipe.name}只能放入${stationName}！`, duration: 1800 })
+      return false
+    }
+    const stationLevel = correctStation === 'oven' ? state.ovenLevel : correctStation === 'pot' ? state.potLevel : state.fridgeLevel
+    if (recipe.requiredLevel > stationLevel) {
+      get().showToast({ type: 'warning', title: `需要${stationName}Lv.${recipe.requiredLevel}才能制作！`, duration: 2000 })
+      return false
+    }
     if (!get().hasIngredients(recipeId)) {
       get().showToast({ type: 'warning', title: '食材不足！', duration: 1500 })
       return false
@@ -537,7 +594,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     recipe.ingredientIds.forEach((id) => {
       inv[id] = (inv[id] || 0) - 1
     })
-    const speedBonus = state.ovenLevel * 0.08
+    const speedBonus = stationLevel * 0.08
     const cookTime = Math.floor(recipe.cookTime / (1 + speedBonus))
     const slots = [...state.cookingSlots]
     slots[slotIndex] = {
@@ -548,6 +605,126 @@ export const useGameStore = create<GameStore>((set, get) => ({
       progress: 0,
     }
     set({ inventory: inv, cookingSlots: slots })
+    return true
+  },
+
+  setPrepRecipe: (station, recipeId) => {
+    set((s) => ({
+      cookingPreps: s.cookingPreps.map((p) =>
+        p.stationType === station ? { ...p, targetRecipeId: recipeId, addedIngredients: [] } : p
+      ),
+    }))
+  },
+
+  addIngredientToPrep: (station, ingredientId) => {
+    const state = get()
+    const prep = state.cookingPreps.find((p) => p.stationType === station)
+    if (!prep) return false
+    if (!prep.targetRecipeId) {
+      get().showToast({ type: 'warning', title: '先在食谱上点击选好要做的点心！', duration: 1800 })
+      return false
+    }
+    const recipe = getRecipeById(prep.targetRecipeId)
+    if (!recipe) return false
+    if ((state.inventory[ingredientId] || 0) <= 0) {
+      get().showToast({ type: 'warning', title: '这个食材库存不够啦', duration: 1500 })
+      return false
+    }
+    const needed = [...recipe.ingredientIds]
+    for (const added of prep.addedIngredients) {
+      const idx = needed.indexOf(added)
+      if (idx >= 0) needed.splice(idx, 1)
+    }
+    if (!needed.includes(ingredientId)) {
+      get().showToast({ type: 'info', title: '这个食材不需要啦', duration: 1200 })
+      return false
+    }
+    const inv = { ...state.inventory, [ingredientId]: state.inventory[ingredientId] - 1 }
+    const newAdded = [...prep.addedIngredients, ingredientId]
+    const isComplete = newAdded.length === recipe.ingredientIds.length
+    set({
+      inventory: inv,
+      cookingPreps: state.cookingPreps.map((p) =>
+        p.stationType === station ? { ...p, addedIngredients: newAdded } : p
+      ),
+    })
+    if (isComplete) {
+      get().showToast({ type: 'success', title: '材料齐了！点炉具空位开始烹饪～', emoji: recipe.emoji, duration: 2000 })
+    }
+    return true
+  },
+
+  removeIngredientFromPrep: (station, ingredientIdx) => {
+    const state = get()
+    const prep = state.cookingPreps.find((p) => p.stationType === station)
+    if (!prep) return
+    const ingId = prep.addedIngredients[ingredientIdx]
+    if (!ingId) return
+    set({
+      inventory: { ...state.inventory, [ingId]: (state.inventory[ingId] || 0) + 1 },
+      cookingPreps: state.cookingPreps.map((p) =>
+        p.stationType === station
+          ? { ...p, addedIngredients: p.addedIngredients.filter((_, i) => i !== ingredientIdx) }
+          : p
+      ),
+    })
+  },
+
+  clearPrep: (station) => {
+    const state = get()
+    const prep = state.cookingPreps.find((p) => p.stationType === station)
+    if (!prep) return
+    const inv = { ...state.inventory }
+    prep.addedIngredients.forEach((id) => {
+      inv[id] = (inv[id] || 0) + 1
+    })
+    set({
+      inventory: inv,
+      cookingPreps: state.cookingPreps.map((p) =>
+        p.stationType === station ? { ...p, targetRecipeId: null, addedIngredients: [] } : p
+      ),
+    })
+  },
+
+  startCookingFromPrep: (station, slotIndex) => {
+    const state = get()
+    const prep = state.cookingPreps.find((p) => p.stationType === station)
+    if (!prep || !prep.targetRecipeId) {
+      get().showToast({ type: 'warning', title: '先把材料拖进准备台哦～', duration: 1500 })
+      return false
+    }
+    const recipe = getRecipeById(prep.targetRecipeId)
+    if (!recipe) return false
+    if (prep.addedIngredients.length !== recipe.ingredientIds.length) {
+      get().showToast({ type: 'warning', title: '材料还没凑齐！', duration: 1500 })
+      return false
+    }
+    const slot = state.cookingSlots[slotIndex]
+    if (!slot || slot.recipeId) {
+      get().showToast({ type: 'warning', title: '这个炉位被占了', duration: 1500 })
+      return false
+    }
+    if (slot.stationType !== station) {
+      get().showToast({ type: 'warning', title: '这个炉位类型不对', duration: 1500 })
+      return false
+    }
+    const stationLevel = station === 'oven' ? state.ovenLevel : station === 'pot' ? state.potLevel : state.fridgeLevel
+    const speedBonus = stationLevel * 0.08
+    const cookTime = Math.floor(recipe.cookTime / (1 + speedBonus))
+    const slots = [...state.cookingSlots]
+    slots[slotIndex] = {
+      ...slot,
+      recipeId: prep.targetRecipeId,
+      startTime: Date.now(),
+      endTime: Date.now() + cookTime,
+      progress: 0,
+    }
+    set({
+      cookingSlots: slots,
+      cookingPreps: state.cookingPreps.map((p) =>
+        p.stationType === station ? { ...p, targetRecipeId: null, addedIngredients: [] } : p
+      ),
+    })
     return true
   },
 
@@ -653,6 +830,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       nickname: cat.name.split('·')[1] || cat.name,
       level: 1,
       exp: 0,
+      expToNext: 100,
       status: 'working',
       energy: cat.baseStamina,
       maxEnergy: cat.baseStamina,
@@ -757,6 +935,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
     get().showToast({ type: 'info', title: '外卖大单来了！', message: `共${count}份奖励丰厚`, emoji: '🛵', duration: 3000 })
   },
 
+  deliverDelivery: () => {
+    const state = get()
+    if (!state.deliveryOrder) return false
+    const required = [...state.deliveryOrder.recipeIds]
+    const usedPrepIds: string[] = []
+    for (const r of required) {
+      const found = state.preparedItems.find((p) => !usedPrepIds.includes(p.id) && p.recipeId === r)
+      if (!found) {
+        get().showToast({ type: 'warning', title: '餐品还没备齐！', duration: 1800 })
+        return false
+      }
+      usedPrepIds.push(found.id)
+    }
+    set((s) => ({ preparedItems: s.preparedItems.filter((p) => !usedPrepIds.includes(p.id)) }))
+    get().completeDelivery()
+    return true
+  },
+
   completeDelivery: () => {
     set((s) => {
       if (!s.deliveryOrder) return {}
@@ -771,10 +967,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
           ...s.statistics,
           totalCoinsEarned: s.statistics.totalCoinsEarned + order.baseReward + tip,
           totalTipsReceived: s.statistics.totalTipsReceived + tip,
+          totalOrdersCompleted: s.statistics.totalOrdersCompleted + 1,
+          totalDeliveriesCompleted: s.statistics.totalDeliveriesCompleted + 1,
         },
       }
     })
-    get().showToast({ type: 'success', title: '外卖完成！', emoji: '🏆', duration: 2000 })
+    get().showToast({ type: 'success', title: '外卖完成！金币+声誉双丰收', emoji: '🏆', duration: 2500 })
     get().checkAchievements()
   },
 
@@ -782,6 +980,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const state = get()
     if (state.isPaused || !state.currentSlotId) return
     const diffMult = state.settings.difficulty === 'relaxed' ? 0.85 : 1.15
+    const deltaSeconds = deltaMs / 1000
+
     set((s) => {
       const customers = s.customers.map((c) => {
         let patience = c.patience - deltaMs * diffMult
@@ -797,15 +997,62 @@ export const useGameStore = create<GameStore>((set, get) => ({
         }
         return { ...c, patience, mood, status }
       })
+
+      const employees = s.employees.map((e) => {
+        let energy = e.energy
+        let exp = e.exp
+        let level = e.level
+        let expToNext = e.expToNext
+        let status: Employee['status'] = e.status
+
+        if (status === 'working') {
+          energy -= deltaSeconds * 1.2
+          if (energy <= 0) {
+            energy = 0
+            status = 'tired'
+          } else {
+            exp += deltaSeconds * (1 + level * 0.2)
+          }
+        } else if (status === 'resting' || status === 'tired') {
+          energy = Math.min(e.maxEnergy, energy + deltaSeconds * 4)
+          if (status === 'tired' && energy >= e.maxEnergy * 0.6) {
+            status = 'resting'
+          }
+          if (energy >= e.maxEnergy) {
+            energy = e.maxEnergy
+            status = 'working'
+          }
+        }
+
+        while (exp >= expToNext) {
+          exp -= expToNext
+          level += 1
+          expToNext = Math.floor(100 * Math.pow(1.3, level - 1))
+        }
+
+        return { ...e, energy, exp, level, expToNext, status }
+      })
+
       return {
         customers,
-        timeOfDay: s.timeOfDay + deltaMs / 1000,
+        employees,
+        timeOfDay: s.timeOfDay + deltaSeconds,
         statistics: {
           ...s.statistics,
-          playTimeSeconds: s.statistics.playTimeSeconds + deltaMs / 1000,
+          playTimeSeconds: s.statistics.playTimeSeconds + deltaSeconds,
         },
       }
     })
+
+    const leveledAny = get().employees.some((e, i) => e.level !== state.employees[i]?.level)
+    if (leveledAny) {
+      const diffs = get().employees.filter((e, i) => !state.employees[i] || e.level > state.employees[i].level)
+      diffs.forEach((e) => {
+        get().showToast({ type: 'achievement', title: `${e.nickname}升级了！`, message: `Lv.${e.level} 岗位加成+${(e.level - 1) * 5}%`, emoji: '🎖️', duration: 2800 })
+      })
+      get().checkAchievements()
+    }
+
     get().updateCooking()
     const angry = get().customers.filter((c) => c.status === 'angry')
     angry.forEach((c) => get().customerLeave(c.instanceId, false))
@@ -841,7 +1088,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       recipesUnlocked: state.unlockedRecipeIds.length,
       storiesUnlocked: state.unlockedCustomerStoryIds.length,
       employeesHired: state.ownedCatIds.length,
-      deliveriesCompleted: 0,
+      deliveriesCompleted: stats.totalDeliveriesCompleted,
       perfectDays: stats.perfectDayCount,
       decorOwned: state.ownedDecorIds.length,
     }

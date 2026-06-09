@@ -264,6 +264,7 @@ export const CollectionModule = () => {
                         { label: '收到的小费', value: statistics.totalTipsReceived, emoji: '💝' },
                         { label: '服务顾客总数', value: statistics.totalCustomersServed, emoji: '🐱' },
                         { label: '完成订单数', value: statistics.totalOrdersCompleted, emoji: '📦' },
+                        { label: '🛵 完成外卖', value: statistics.totalDeliveriesCompleted, emoji: '🛵' },
                         { label: '制作点心总数', value: statistics.totalRecipesCooked, emoji: '🍳' },
                         { label: '完美天数', value: statistics.perfectDayCount, emoji: '☀️' },
                         { label: '游戏时长', value: `${Math.floor(statistics.playTimeSeconds / 60)} 分钟`, emoji: '⏱️' },

@@ -91,7 +91,7 @@ export const DormitoryModule = () => {
                     {employees.map((emp, i) => {
                       const def = getCatEmployeeById(emp.catDefId)
                       const role = roleLabels[def?.role || 'chef']
-                      const expForNext = emp.level * 100
+                      const stationBonus = (emp.level - 1) * 5
                       return (
                         <motion.div
                           key={emp.id}
@@ -154,17 +154,29 @@ export const DormitoryModule = () => {
                                 </div>
 
                                 <div className="mt-3 space-y-2">
+                                  <div className="bg-white/80 rounded-lg px-3 py-2 border border-stone-300">
+                                    <div className="text-[11px] font-bold text-purple-700 flex items-center justify-between">
+                                      <span>🎖️ 当前岗位加成</span>
+                                      <span className="text-green-700">+{stationBonus}%</span>
+                                    </div>
+                                    <div className="text-[10px] text-stone-500 mt-0.5">
+                                      {emp.assignedStation === 'kitchen' && '提升烹饪速度 + 缩短顾客等餐'}
+                                      {emp.assignedStation === 'floor' && '提升顾客耐心 + 小费几率'}
+                                      {emp.assignedStation === 'register' && '提升收银效率 + 金币收入'}
+                                      {!emp.assignedStation && '分配岗位后生效'}
+                                    </div>
+                                  </div>
                                   <div>
                                     <div className="flex justify-between text-[11px] font-bold text-stone-600 mb-1">
                                       <span>经验值</span>
-                                      <span>{emp.exp}/{expForNext}</span>
+                                      <span>{Math.floor(emp.exp)}/{emp.expToNext}</span>
                                     </div>
-                                    <ProgressBar value={emp.exp} max={expForNext} size="sm" color="pink" />
+                                    <ProgressBar value={emp.exp} max={emp.expToNext} size="sm" color="pink" />
                                   </div>
                                   <div>
                                     <div className="flex justify-between text-[11px] font-bold text-stone-600 mb-1">
                                       <span className="flex items-center gap-1"><Zap size={12} /> 精力值</span>
-                                      <span>{emp.energy}/{emp.maxEnergy}</span>
+                                      <span>{Math.floor(emp.energy)}/{emp.maxEnergy}</span>
                                     </div>
                                     <ProgressBar value={emp.energy} max={emp.maxEnergy} size="sm" color="blue" />
                                   </div>

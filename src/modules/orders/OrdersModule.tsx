@@ -23,6 +23,7 @@ export const OrdersModule = () => {
   const deliverOrder = useGameStore((s) => s.deliverOrder)
   const spawnCustomer = useGameStore((s) => s.spawnCustomer)
   const triggerDelivery = useGameStore((s) => s.triggerDelivery)
+  const deliverDelivery = useGameStore((s) => s.deliverDelivery)
 
   const [showDaily, setShowDaily] = useState(true)
 
@@ -225,20 +226,7 @@ export const OrdersModule = () => {
                     variant="success"
                     icon={<Sparkles size={16} />}
                     disabled={!allReady('delivery', deliveryOrder)}
-                    onClick={() => {
-                      const toDeliver: string[] = []
-                      const needed: Record<string, number> = {}
-                      deliveryOrder.recipeIds.forEach((r) => { needed[r] = (needed[r] || 0) + 1 })
-                      for (const item of preparedItems) {
-                        if (needed[item.recipeId] && needed[item.recipeId] > 0) {
-                          needed[item.recipeId]--
-                          toDeliver.push(item.recipeId)
-                          useGameStore.setState((s) => ({ preparedItems: s.preparedItems.filter((p) => p.id !== item.id) }))
-                        }
-                      }
-                      deliverOrder(deliveryOrder.id, toDeliver)
-                      useGameStore.setState({ deliveryOrder: null })
-                    }}
+                    onClick={() => deliverDelivery()}
                     fullWidth
                     size="lg"
                   >

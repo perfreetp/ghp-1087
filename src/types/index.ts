@@ -95,6 +95,7 @@ export interface Employee {
   nickname: string
   level: number
   exp: number
+  expToNext: number
   status: 'working' | 'resting' | 'tired'
   energy: number
   maxEnergy: number
@@ -109,6 +110,12 @@ export interface CookingSlot {
   endTime: number | null
   progress: number
   stationType: 'oven' | 'pot' | 'fridge'
+}
+
+export interface CookingPrep {
+  stationType: 'oven' | 'pot' | 'fridge'
+  targetRecipeId: string | null
+  addedIngredients: string[]
 }
 
 export interface PreparedItem {
@@ -161,6 +168,7 @@ export interface Statistics {
   totalCoinsEarned: number
   totalCustomersServed: number
   totalOrdersCompleted: number
+  totalDeliveriesCompleted: number
   totalRecipesCooked: number
   totalTipsReceived: number
   favoriteRecipeId: string | null
@@ -189,6 +197,7 @@ export interface GameState {
   customers: CustomerInstance[]
   orders: Order[]
   cookingSlots: CookingSlot[]
+  cookingPreps: CookingPrep[]
   preparedItems: PreparedItem[]
 
   employees: Employee[]
